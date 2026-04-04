@@ -1,4 +1,4 @@
-# main.py — БОТ С ФОРМАМИ И FSM
+# main.py — ИСПРАВЛЕННЫЙ КОД (aiogram 3.x compatible)
 import asyncio
 import os
 from datetime import datetime
@@ -8,7 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import init_db, add_user, get_balance, update_balance, create_walk_request
+from database import init_db, add_user, get_balance, update_balance, create_walk_request, get_user_requests
 
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -20,7 +20,6 @@ class WalkState(StatesGroup):
     date = State()
     time = State()
     duration = State()
-    confirm = State()
 
 # 🐕 Команда /start
 @dp.message(Command("start"))
@@ -43,21 +42,17 @@ async def cmd_start(message: Message):
 async def cmd_balance(message: Message):
     user_id = message.from_user.id
     balance = await get_balance(user_id)
-    
-    await message.answer(
-        f"💳 Ваш баланс: {balance} ₽\n\n"
-        f"💡 Для пополнения: /topup"
-    )
+    await message.answer(f"💳 Ваш баланс: {balance} ₽\n\n💡 Для пополнения: /topup")
 
 # 💳 Начало пополнения
 @dp.message(Command("topup"))
-async def cmd_topup_start(message: Message):
+async def cmd_topup_start(message: Message, state: FSMContext):
     await message.answer(
         "💳 Пополнение баланса\n\n"
         "📝 Напишите сумму в рублях (например: 500)\n"
         "❌ /cancel — отмена"
     )
-    await dp.storage.set_state(user_id=message.from_user.id, state=TopupState.amount)
+    await state.set_state(TopupState.amount)  # ✅ Исправлено!
 
 # Обработка суммы пополнения
 @dp.message(TopupState.amount)
@@ -71,10 +66,7 @@ async def process_topup_amount(message: Message, state: FSMContext):
         await update_balance(message.from_user.id, amount)
         new_balance = await get_balance(message.from_user.id)
         
-        await message.answer(
-            f"✅ Баланс пополнен на {amount} ₽\n"
-            f"💳 Новый баланс: {new_balance} ₽"
-        )
+        await message.answer(f"✅ Баланс пополнен на {amount} ₽\n💳 Новый баланс: {new_balance} ₽")
         await state.clear()
     except ValueError:
         await message.answer("❌ Введите корректное число (например: 500)")
@@ -82,24 +74,16 @@ async def process_topup_amount(message: Message, state: FSMContext):
 # 🐕 Начало заявки на выгул
 @dp.message(Command("walk"))
 async def cmd_walk_start(message: Message, state: FSMContext):
-    await message.answer(
-        "🐕 Заявка на выгул\n\n"
-        "📅 Введите дату (ДД.ММ.ГГГГ):\n"
-        "❌ /cancel — отмена"
-    )
-    await state.set_state(WalkState.date)
+    await message.answer("🐕 Заявка на выгул\n\n📅 Введите дату (ДД.ММ.ГГГГ):\n❌ /cancel — отмена")
+    await state.set_state(WalkState.date)  # ✅ Исправлено!
 
 # Обработка даты
 @dp.message(WalkState.date)
 async def process_walk_date(message: Message, state: FSMContext):
-    # Простая валидация даты
     try:
-        datetime.strptime(message.text, "%d.%m.%Y")
+        datetime.strptime(message.text, "%d.%m.%Y")  # Проверяем формат
         await state.update_data(walk_date=message.text)
-        await message.answer(
-            "⏰ Введите время (ЧЧ:ММ):\n"
-            "Например: 10:30 или 18:00"
-        )
+        await message.answer("⏰ Введите время (ЧЧ:ММ):\nНапример: 10:30 или 18:00")
         await state.set_state(WalkState.time)
     except ValueError:
         await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ")
@@ -108,13 +92,9 @@ async def process_walk_date(message: Message, state: FSMContext):
 @dp.message(WalkState.time)
 async def process_walk_time(message: Message, state: FSMContext):
     try:
-        datetime.strptime(message.text, "%H:%M")
+        datetime.strptime(message.text, "%H:%M")  # Проверяем формат
         await state.update_data(walk_time=message.text)
-        await message.answer(
-            "⏱ Выберите длительность (минут):\n"
-            "30, 40, 50, 60, 75, 90\n\n"
-            "💰 Стоимость: 50₽ за 10 мин"
-        )
+        await message.answer("⏱ Выберите длительность (минут):\n30, 40, 50, 60, 75, 90\n\n💰 Стоимость: 50₽ за 10 мин")
         await state.set_state(WalkState.duration)
     except ValueError:
         await message.answer("❌ Неверный формат. Используйте ЧЧ:ММ")
@@ -128,13 +108,11 @@ async def process_walk_duration(message: Message, state: FSMContext):
             await message.answer("❌ Минимум 30 минут")
             return
         
-        # Рассчитываем цену (50₽ за 10 мин)
         price = (duration // 10) * 50
-        
         data = await state.get_data()
         user_id = message.from_user.id
         
-        # Создаём заявку
+        # Создаём заявку (строки date/time теперь работают!)
         await create_walk_request(
             user_id=user_id,
             date=data['walk_date'],
@@ -174,7 +152,6 @@ async def cmd_mywalks(message: Message):
             f"📅 {req['walk_date']} в {req['walk_time']}\n"
             f"⏱ {req['duration_min']} мин | 💰 {req['price']} ₽\n\n"
         )
-    
     await message.answer(text)
 
 # ❌ Отмена
@@ -185,15 +162,13 @@ async def cmd_cancel(message: Message, state: FSMContext):
 
 async def main():
     token = os.getenv("BOT_TOKEN")
-    
     if not token:
         print("❌ ОШИБКА: Токен не найден!")
         return
     
     await init_db()
-    
     bot = Bot(token=token)
-    print("✅ Бот запущен с FSM и формами!")
+    print("✅ Бот запущен с исправленным FSM!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

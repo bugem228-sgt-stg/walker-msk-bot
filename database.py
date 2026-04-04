@@ -1,15 +1,13 @@
-# database.py — Исправленная версия
+# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (типы date/time)
 import asyncpg
 import os
-from datetime import date, time
+from datetime import datetime
 
 pool = None
 
 async def init_db():
-    """Инициализация базы данных"""
     global pool
     database_url = os.getenv("DATABASE_URL")
-    
     if not database_url:
         print("❌ DATABASE_URL не найден!")
         return
@@ -17,7 +15,6 @@ async def init_db():
     pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10)
     
     async with pool.acquire() as conn:
-        # Таблица пользователей
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -27,20 +24,19 @@ async def init_db():
             )
         """)
         
-        # Таблица заявок (используем TEXT для простоты)
+        # Используем нативные типы DATE и TIME
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
-                walk_date TEXT,        -- ← TEXT вместо DATE
-                walk_time TEXT,        -- ← TEXT вместо TIME
+                walk_date DATE,
+                walk_time TIME,
                 duration_min INTEGER,
                 status TEXT DEFAULT 'pending',
                 price DECIMAL(10, 2),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-    
     print("✅ База данных инициализирована!")
 
 async def add_user(user_id: int, username: str):
@@ -63,19 +59,34 @@ async def update_balance(user_id: int, amount: float):
             amount, user_id
         )
 
-async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
-    """Создаём заявку (date и time теперь строки)"""
+async def create_walk_request(user_id: int, date_str: str, time_str: str, duration: int, price: float):
+    # ✅ КОНВЕРТАЦИЯ: строки -> объекты date/time для asyncpg
+    date_obj = datetime.strptime(date_str, "%d.%m.%Y").date()
+    time_obj = datetime.strptime(time_str, "%H:%M").time()
+    
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO walk_requests 
                (user_id, walk_date, walk_time, duration_min, price, status) 
                VALUES ($1, $2, $3, $4, $5, 'pending')""",
-            user_id, date, time, duration, price
+            user_id, date_obj, time_obj, duration, price
         )
 
 async def get_user_requests(user_id: int):
     async with pool.acquire() as conn:
-        return await conn.fetch(
+        rows = await conn.fetch(
             "SELECT * FROM walk_requests WHERE user_id = $1 ORDER BY created_at DESC",
             user_id
         )
+        # ✅ КОНВЕРТАЦИЯ ОБРАТНО: объекты date/time -> строки для вывода в Telegram
+        result = []
+        for row in rows:
+            result.append({
+                'id': row['id'],
+                'walk_date': row['walk_date'].strftime("%d.%m.%Y"),
+                'walk_time': row['walk_time'].strftime("%H:%M"),
+                'duration_min': row['duration_min'],
+                'price': float(row['price']),
+                'status': row['status']
+            })
+        return result

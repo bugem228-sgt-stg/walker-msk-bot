@@ -1,8 +1,8 @@
-# database.py — Работа с базой данных
+# database.py — Исправленная версия
 import asyncpg
 import os
+from datetime import date, time
 
-# Глобальная переменная для подключения
 pool = None
 
 async def init_db():
@@ -14,15 +14,10 @@ async def init_db():
         print("❌ DATABASE_URL не найден!")
         return
     
-    # Создаём пул подключений
-    pool = await asyncpg.create_pool(
-        database_url,
-        min_size=2,
-        max_size=10
-    )
+    pool = await asyncpg.create_pool(database_url, min_size=2, max_size=10)
     
-    # Создаём таблицу пользователей
     async with pool.acquire() as conn:
+        # Таблица пользователей
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -32,13 +27,13 @@ async def init_db():
             )
         """)
         
-        # Таблица заявок на выгул
+        # Таблица заявок (используем TEXT для простоты)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
-                walk_date DATE,
-                walk_time TIME,
+                walk_date TEXT,        -- ← TEXT вместо DATE
+                walk_time TEXT,        -- ← TEXT вместо TIME
                 duration_min INTEGER,
                 status TEXT DEFAULT 'pending',
                 price DECIMAL(10, 2),
@@ -49,7 +44,6 @@ async def init_db():
     print("✅ База данных инициализирована!")
 
 async def add_user(user_id: int, username: str):
-    """Добавить пользователя или обновить данные"""
     async with pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO users (user_id, username, balance) VALUES ($1, $2, 0) "
@@ -58,16 +52,11 @@ async def add_user(user_id: int, username: str):
         )
 
 async def get_balance(user_id: int) -> float:
-    """Получить баланс пользователя"""
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT balance FROM users WHERE user_id = $1",
-            user_id
-        )
+        row = await conn.fetchrow("SELECT balance FROM users WHERE user_id = $1", user_id)
         return float(row['balance']) if row else 0.0
 
 async def update_balance(user_id: int, amount: float):
-    """Изменить баланс (положительно или отрицательно)"""
     async with pool.acquire() as conn:
         await conn.execute(
             "UPDATE users SET balance = balance + $1 WHERE user_id = $2",
@@ -75,7 +64,7 @@ async def update_balance(user_id: int, amount: float):
         )
 
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
-    """Создать заявку на выгул"""
+    """Создаём заявку (date и time теперь строки)"""
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO walk_requests 
@@ -85,7 +74,6 @@ async def create_walk_request(user_id: int, date: str, time: str, duration: int,
         )
 
 async def get_user_requests(user_id: int):
-    """Получить все заявки пользователя"""
     async with pool.acquire() as conn:
         return await conn.fetch(
             "SELECT * FROM walk_requests WHERE user_id = $1 ORDER BY created_at DESC",

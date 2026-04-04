@@ -1,4 +1,4 @@
-# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (типы date/time)
+# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (имена параметров совпадают с main.py)
 import asyncpg
 import os
 from datetime import datetime
@@ -24,7 +24,6 @@ async def init_db():
             )
         """)
         
-        # Используем нативные типы DATE и TIME
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
@@ -59,10 +58,10 @@ async def update_balance(user_id: int, amount: float):
             amount, user_id
         )
 
-async def create_walk_request(user_id: int, date_str: str, time_str: str, duration: int, price: float):
-    # ✅ КОНВЕРТАЦИЯ: строки -> объекты date/time для asyncpg
-    date_obj = datetime.strptime(date_str, "%d.%m.%Y").date()
-    time_obj = datetime.strptime(time_str, "%H:%M").time()
+async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
+    # ✅ Конвертация строк в объекты date/time для PostgreSQL
+    date_obj = datetime.strptime(date, "%d.%m.%Y").date()
+    time_obj = datetime.strptime(time, "%H:%M").time()
     
     async with pool.acquire() as conn:
         await conn.execute(
@@ -78,7 +77,7 @@ async def get_user_requests(user_id: int):
             "SELECT * FROM walk_requests WHERE user_id = $1 ORDER BY created_at DESC",
             user_id
         )
-        # ✅ КОНВЕРТАЦИЯ ОБРАТНО: объекты date/time -> строки для вывода в Telegram
+        # ✅ Конвертация обратно в строки для вывода в Telegram
         result = []
         for row in rows:
             result.append({

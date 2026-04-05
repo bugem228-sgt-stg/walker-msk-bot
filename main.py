@@ -258,8 +258,10 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         await state.clear()
         await call.message.answer("Главное меню:", reply_markup=main_kb)
     except Exception as e:
-        print(f"❌ Ошибка сохранения: {e}")
-        await call.message.answer("❌ Ошибка при сохранении заявки.")
+        # 🔥 Выводим полную ошибку в логи Railway, чтобы мы сразу видели причину
+        import traceback
+        print(f"❌ ПОЛНАЯ ОШИБКА СОХРАНЕНИЯ:\n{traceback.format_exc()}")
+        await call.message.answer(f"❌ Ошибка при сохранении заявки. Админ уже видит лог.")
 
 @dp.callback_query(F.data == "cancel_walk")
 async def cancel_walk_click(call: CallbackQuery, state: FSMContext):

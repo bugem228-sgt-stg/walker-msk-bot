@@ -1,4 +1,4 @@
-# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (имена параметров совпадают с main.py)
+# database.py — Полная версия с админ-функциями
 import asyncpg
 import os
 from datetime import datetime
@@ -28,10 +28,10 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
-                walk_date DATE,
-                walk_time TIME,
+                walk_date TEXT,  -- TEXT для простоты
+                walk_time TEXT,  -- TEXT для простоты
                 duration_min INTEGER,
-                status TEXT DEFAULT 'pending',
+                status TEXT DEFAULT 'pending', -- pending, approved, rejected
                 price DECIMAL(10, 2),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -59,33 +59,41 @@ async def update_balance(user_id: int, amount: float):
         )
 
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
-    # ✅ Конвертация строк в объекты date/time для PostgreSQL
     date_obj = datetime.strptime(date, "%d.%m.%Y").date()
     time_obj = datetime.strptime(time, "%H:%M").time()
-    
+    # В БД сохраняем строки, чтобы избежать ошибок типов
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO walk_requests 
                (user_id, walk_date, walk_time, duration_min, price, status) 
                VALUES ($1, $2, $3, $4, $5, 'pending')""",
-            user_id, date_obj, time_obj, duration, price
+            user_id, str(date_obj), str(time_obj), duration, price
         )
 
-async def get_user_requests(user_id: int):
+# 🔥 НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ 🔥
+
+async def get_pending_requests():
+    """Получить все заявки со статусом pending"""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM walk_requests WHERE user_id = $1 ORDER BY created_at DESC",
-            user_id
+        rows = await conn.fetch("SELECT * FROM walk_requests WHERE status = 'pending' ORDER BY id DESC")
+        return rows
+
+async def update_request_status(req_id: int, status: str):
+    """Обновить статус заявки (approved/rejected)"""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE walk_requests SET status = $1 WHERE id = $2",
+            status, req_id
         )
-        # ✅ Конвертация обратно в строки для вывода в Telegram
-        result = []
-        for row in rows:
-            result.append({
-                'id': row['id'],
-                'walk_date': row['walk_date'].strftime("%d.%m.%Y"),
-                'walk_time': row['walk_time'].strftime("%H:%M"),
-                'duration_min': row['duration_min'],
-                'price': float(row['price']),
-                'status': row['status']
-            })
-        return result
+
+async def get_statistics():
+    """Получить статистику по боту"""
+    async with pool.acquire() as conn:
+        users_count = await conn.fetchval("SELECT COUNT(*) FROM users")
+        total_balance = await conn.fetchval("SELECT SUM(balance) FROM users")
+        pending_count = await conn.fetchval("SELECT COUNT(*) FROM walk_requests WHERE status = 'pending'")
+        return {
+            "users": users_count,
+            "balance": float(total_balance) if total_balance else 0,
+            "pending": pending_count
+        }

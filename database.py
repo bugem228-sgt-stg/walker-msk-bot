@@ -1,4 +1,4 @@
-# database.py — ФИНАЛЬНАЯ ВЕРСИЯ (все функции включены)
+# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (типы данных sync с asyncpg)
 import asyncpg
 import os
 from datetime import datetime
@@ -23,13 +23,13 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+        # Таблица уже создана с типами DATE/TIME, оставляем как есть
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
-                walk_date TEXT,
-                walk_time TEXT,
+                walk_date DATE,
+                walk_time TIME,
                 duration_min INTEGER,
                 status TEXT DEFAULT 'pending',
                 price DECIMAL(10, 2),
@@ -59,6 +59,7 @@ async def update_balance(user_id: int, amount: float):
         )
 
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
+    # ✅ Конвертируем строки из Telegram в объекты date/time для asyncpg
     date_obj = datetime.strptime(date, "%d.%m.%Y").date()
     time_obj = datetime.strptime(time, "%H:%M").time()
     
@@ -67,10 +68,9 @@ async def create_walk_request(user_id: int, date: str, time: str, duration: int,
             """INSERT INTO walk_requests 
                (user_id, walk_date, walk_time, duration_min, price, status) 
                VALUES ($1, $2, $3, $4, $5, 'pending')""",
-            user_id, str(date_obj), str(time_obj), duration, price
+            user_id, date_obj, time_obj, duration, price  # ✅ Передаём объекты, не строки!
         )
 
-# ФУНКЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ (Её не было в прошлом обновлении)
 async def get_user_requests(user_id: int):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -79,40 +79,29 @@ async def get_user_requests(user_id: int):
         )
         result = []
         for row in rows:
+            # ✅ Обратная конвертация: объекты date/time -> строки для вывода
             result.append({
                 'id': row['id'],
-                'walk_date': row['walk_date'], # Уже строка
-                'walk_time': row['walk_time'], # Уже строка
+                'walk_date': row['walk_date'].strftime("%d.%m.%Y"),
+                'walk_time': row['walk_time'].strftime("%H:%M"),
                 'duration_min': row['duration_min'],
                 'price': float(row['price']),
                 'status': row['status']
             })
         return result
 
-# --- НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ ---
-
+# --- АДМИН-ФУНКЦИИ ---
 async def get_pending_requests():
-    """Получить все заявки со статусом pending"""
     async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM walk_requests WHERE status = 'pending' ORDER BY id DESC")
-        return rows
+        return await conn.fetch("SELECT * FROM walk_requests WHERE status = 'pending' ORDER BY id DESC")
 
 async def update_request_status(req_id: int, status: str):
-    """Обновить статус заявки (approved/rejected)"""
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE walk_requests SET status = $1 WHERE id = $2",
-            status, req_id
-        )
+        await conn.execute("UPDATE walk_requests SET status = $1 WHERE id = $2", status, req_id)
 
 async def get_statistics():
-    """Получить статистику по боту"""
     async with pool.acquire() as conn:
         users_count = await conn.fetchval("SELECT COUNT(*) FROM users")
         total_balance = await conn.fetchval("SELECT SUM(balance) FROM users")
         pending_count = await conn.fetchval("SELECT COUNT(*) FROM walk_requests WHERE status = 'pending'")
-        return {
-            "users": users_count,
-            "balance": float(total_balance) if total_balance else 0,
-            "pending": pending_count
-        }
+        return {"users": users_count, "balance": float(total_balance) if total_balance else 0, "pending": pending_count}

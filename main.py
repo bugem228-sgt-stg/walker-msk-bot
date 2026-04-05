@@ -204,7 +204,7 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         price = (duration // 10) * 50
         data = await state.get_data()
 
-        if 'walk_date' not in data or 'walk_time' not in 
+        if 'walk_date' not in data or 'walk_time' not in data:
             await call.message.answer("❌ Данные потеряны. Попробуйте с /walk")
             await state.clear()
             return

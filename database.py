@@ -1,4 +1,4 @@
-# database.py — Полная версия с админ-функциями
+# database.py — ФИНАЛЬНАЯ ВЕРСИЯ (все функции включены)
 import asyncpg
 import os
 from datetime import datetime
@@ -28,10 +28,10 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
-                walk_date TEXT,  -- TEXT для простоты
-                walk_time TEXT,  -- TEXT для простоты
+                walk_date TEXT,
+                walk_time TEXT,
                 duration_min INTEGER,
-                status TEXT DEFAULT 'pending', -- pending, approved, rejected
+                status TEXT DEFAULT 'pending',
                 price DECIMAL(10, 2),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -61,7 +61,7 @@ async def update_balance(user_id: int, amount: float):
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
     date_obj = datetime.strptime(date, "%d.%m.%Y").date()
     time_obj = datetime.strptime(time, "%H:%M").time()
-    # В БД сохраняем строки, чтобы избежать ошибок типов
+    
     async with pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO walk_requests 
@@ -70,7 +70,26 @@ async def create_walk_request(user_id: int, date: str, time: str, duration: int,
             user_id, str(date_obj), str(time_obj), duration, price
         )
 
-# 🔥 НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ 🔥
+# ФУНКЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ (Её не было в прошлом обновлении)
+async def get_user_requests(user_id: int):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM walk_requests WHERE user_id = $1 ORDER BY created_at DESC",
+            user_id
+        )
+        result = []
+        for row in rows:
+            result.append({
+                'id': row['id'],
+                'walk_date': row['walk_date'], # Уже строка
+                'walk_time': row['walk_time'], # Уже строка
+                'duration_min': row['duration_min'],
+                'price': float(row['price']),
+                'status': row['status']
+            })
+        return result
+
+# --- НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ ---
 
 async def get_pending_requests():
     """Получить все заявки со статусом pending"""

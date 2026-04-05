@@ -1,4 +1,4 @@
-# database.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (типы данных sync с asyncpg)
+# database.py — Обновленная версия (списание баланса + проверка)
 import asyncpg
 import os
 from datetime import datetime
@@ -23,13 +23,13 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Таблица уже создана с типами DATE/TIME, оставляем как есть
+        
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS walk_requests (
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
-                walk_date DATE,
-                walk_time TIME,
+                walk_date TEXT,
+                walk_time TEXT,
                 duration_min INTEGER,
                 status TEXT DEFAULT 'pending',
                 price DECIMAL(10, 2),
@@ -58,8 +58,18 @@ async def update_balance(user_id: int, amount: float):
             amount, user_id
         )
 
+# 🔥 НОВАЯ ФУНКЦИЯ: Списание средств (возвращает True если успешно, False если нет денег)
+async def deduct_balance(user_id: int, amount: float) -> bool:
+    async with pool.acquire() as conn:
+        # Списываем только если баланс >= суммы
+        result = await conn.execute(
+            "UPDATE users SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1",
+            amount, user_id
+        )
+        # Если обновилась 1 строка — значит деньги были. Если 0 — не было.
+        return "UPDATE 1" in result
+
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
-    # ✅ Конвертируем строки из Telegram в объекты date/time для asyncpg
     date_obj = datetime.strptime(date, "%d.%m.%Y").date()
     time_obj = datetime.strptime(time, "%H:%M").time()
     
@@ -68,7 +78,7 @@ async def create_walk_request(user_id: int, date: str, time: str, duration: int,
             """INSERT INTO walk_requests 
                (user_id, walk_date, walk_time, duration_min, price, status) 
                VALUES ($1, $2, $3, $4, $5, 'pending')""",
-            user_id, date_obj, time_obj, duration, price  # ✅ Передаём объекты, не строки!
+            user_id, str(date_obj), str(time_obj), duration, price
         )
 
 async def get_user_requests(user_id: int):
@@ -79,18 +89,16 @@ async def get_user_requests(user_id: int):
         )
         result = []
         for row in rows:
-            # ✅ Обратная конвертация: объекты date/time -> строки для вывода
             result.append({
                 'id': row['id'],
-                'walk_date': row['walk_date'].strftime("%d.%m.%Y"),
-                'walk_time': row['walk_time'].strftime("%H:%M"),
+                'walk_date': row['walk_date'],
+                'walk_time': row['walk_time'],
                 'duration_min': row['duration_min'],
                 'price': float(row['price']),
                 'status': row['status']
             })
         return result
 
-# --- АДМИН-ФУНКЦИИ ---
 async def get_pending_requests():
     async with pool.acquire() as conn:
         return await conn.fetch("SELECT * FROM walk_requests WHERE status = 'pending' ORDER BY id DESC")
@@ -98,6 +106,18 @@ async def get_pending_requests():
 async def update_request_status(req_id: int, status: str):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE walk_requests SET status = $1 WHERE id = $2", status, req_id)
+
+# 🔥 НОВАЯ ФУНКЦИЯ: Получить детали заявки по ID
+async def get_request_details(req_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM walk_requests WHERE id = $1", req_id)
+        if row:
+            return {
+                'id': row['id'],
+                'user_id': row['user_id'],
+                'price': float(row['price'])
+            }
+        return None
 
 async def get_statistics():
     async with pool.acquire() as conn:

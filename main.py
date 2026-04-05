@@ -1,10 +1,10 @@
-# main.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (aiogram 3.x compatible)
+# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (с работающим /addbalance)
 import asyncio
 import os
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -78,7 +78,6 @@ async def cmd_mywalks_menu(message: Message):
         text += f"{emoji} #{req['id']} | {req['walk_date']} в {req['walk_time']} ({req['duration_min']} мин)\n"
     await message.answer(text, reply_markup=main_kb)
 
-# 🔥 ИСПРАВЛЕННОЕ ПОПОЛНЕНИЕ
 @dp.message(F.text == "💰 Пополнить")
 async def cmd_topup_menu(message: Message, state: FSMContext):
     await message.answer("💳 Введите сумму пополнения (например: 500):", 
@@ -98,7 +97,6 @@ async def process_topup_amount(message: Message, state: FSMContext):
             await message.answer("❌ Сумма должна быть больше 0")
             return
         
-        # 🔹 Безопасная отправка админу (ИСПОЛЬЗУЕМ message.bot)
         try:
             await message.bot.send_message(
                 ADMIN_ID,
@@ -108,16 +106,13 @@ async def process_topup_amount(message: Message, state: FSMContext):
                 f"Для зачисления:\n<code>/addbalance {message.from_user.id} {int(amount)}</code>",
                 parse_mode="HTML"
             )
-            print(f"✅ Уведомление админу отправлено для user {message.from_user.id}")
         except Exception as e:
-            print(f"⚠️ Не удалось уведомить админа (проверьте ADMIN_ID): {e}")
-            # Бот всё равно ответит пользователю
+            print(f"⚠️ Не удалось уведомить админа: {e}")
 
         await message.answer(f"✅ Заявка на {amount}₽ отправлена!\n💡 Админ зачислит средства вручную.", reply_markup=main_kb)
         await state.clear()
-        
     except ValueError:
-        await message.answer("❌ Введите корректное число (например: 500)")
+        await message.answer("❌ Введите корректное число")
 
 # --- 👨‍💼 АДМИН-ПАНЕЛЬ ---
 
@@ -156,7 +151,6 @@ async def admin_show_pending(call: CallbackQuery):
         text += f"🆔 #{req['id']} | 📅 {req['walk_date']} {req['walk_time']}\n"
         text += f"   ⏱ {req['duration_min']} мин | 💰 {req['price']} ₽\n"
         text += f"   👤 User ID: <code>{req['user_id']}</code>\n\n"
-        # ✅ Добавляем user_id в callback data, чтобы уведомить правильного юзера
         keyboard.append([
             InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}_{req['user_id']}"),
             InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}_{req['user_id']}")
@@ -167,36 +161,58 @@ async def admin_show_pending(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("approve_"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    
-    # ✅ Извлекаем ID заявки и ID пользователя из callback data
-    parts = call.data.split("_")
-    req_id = int(parts[1])
-    user_id = int(parts[2])
-    
-    await update_request_status(req_id, "approved")
+    _, req_id, user_id = call.data.split("_")
+    await update_request_status(int(req_id), "approved")
     await call.answer("Заявка одобрена!", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"✅ Заявка #{req_id}", f"✅ Заявка #{req_id} [ОДОБРЕНО]"))
-    
-    # ✅ Уведомляем ПОЛЬЗОВАТЕЛЯ (используем call.bot)
-    try:
-        await call.bot.send_message(user_id, f"✅ Ваша заявка #{req_id} одобрена! Ждём вас.")
+    try: await call.bot.send_message(int(user_id), f"✅ Ваша заявка #{req_id} одобрена!")
     except: pass
 
 @dp.callback_query(F.data.startswith("reject_"))
 async def admin_reject(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    
-    parts = call.data.split("_")
-    req_id = int(parts[1])
-    user_id = int(parts[2])
-    
-    await update_request_status(req_id, "rejected")
+    _, req_id, user_id = call.data.split("_")
+    await update_request_status(int(req_id), "rejected")
     await call.answer("Заявка отклонена", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"❌ Заявка #{req_id}", f"❌ Заявка #{req_id} [ОТКЛОНЕНО]"))
+    try: await call.bot.send_message(int(user_id), f"❌ Ваша заявка #{req_id} отклонена.")
+    except: pass
+
+# 🔥 ДОБАВЛЕННЫЙ ОБРАБОТЧИК /addbalance
+@dp.message(Command("addbalance"))
+async def cmd_add_balance(message: Message, command: CommandObject):
+    if message.from_user.id != ADMIN_ID:
+        return
     
     try:
-        await call.bot.send_message(user_id, f"❌ Ваша заявка #{req_id} отклонена.")
-    except: pass
+        if not command.args:
+            await message.answer("❌ Использование: /addbalance ID СУММА\nПример: /addbalance 123456789 500")
+            return
+            
+        # Убираем кавычки если пользователь их случайно поставил
+        clean_args = command.args.replace('"', '').replace("'", "").split()
+        
+        if len(clean_args) != 2:
+            await message.answer("❌ Нужно указать ID и сумму через пробел.\nПример: /addbalance 123456789 500")
+            return
+            
+        user_id = int(clean_args[0])
+        amount = float(clean_args[1])
+        
+        await update_balance(user_id, amount)
+        new_balance = await get_balance(user_id)
+        
+        await message.answer(f"✅ Зачислено {amount}₽ пользователю {user_id}\n💳 Новый баланс: {new_balance}₽")
+        
+        try:
+            await message.bot.send_message(user_id, f"💰 Админ зачислил {amount}₽ на ваш счёт!\n💳 Баланс: {new_balance}₽")
+        except:
+            pass
+            
+    except ValueError:
+        await message.answer("❌ ID и сумма должны быть числами.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 # --- 🐕 ЛОГИКА ЗАЯВОК ---
 

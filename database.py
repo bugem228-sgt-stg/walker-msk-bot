@@ -70,15 +70,17 @@ async def deduct_balance(user_id: int, amount: float) -> bool:
         return "UPDATE 1" in result
 
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):
+    # Преобразуем строки из Telegram в нативные объекты Python
     date_obj = datetime.strptime(date, "%d.%m.%Y").date()
     time_obj = datetime.strptime(time, "%H:%M").time()
     
     async with pool.acquire() as conn:
+        # asyncpg сам корректно преобразует date/time объекты в SQL типы
         await conn.execute(
             """INSERT INTO walk_requests 
                (user_id, walk_date, walk_time, duration_min, price, status) 
                VALUES ($1, $2, $3, $4, $5, 'pending')""",
-            user_id, str(date_obj), str(time_obj), duration, price
+            user_id, date_obj, time_obj, duration, price
         )
 
 async def get_user_requests(user_id: int):

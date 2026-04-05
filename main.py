@@ -1,4 +1,4 @@
-# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (Исправленный синтаксис + Автосписание)
+# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (Ваш ID: 400063653)
 import asyncio
 import os
 from datetime import datetime
@@ -15,8 +15,8 @@ from database import (
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# ⚠️ ВАЖНО: Впишите сюда свой Telegram ID (число, без кавычек)
-ADMIN_ID = 400063653  # <-- ЗАМЕНИТЕ НА ВАШ ID!
+# ✅ АВТОМАТИЧЕСКИ ПОДСТАВЛЕН ВАШ ID
+ADMIN_ID = 400063653 
 
 # --- 🎨 КЛАВИАТУРЫ ---
 main_kb = ReplyKeyboardMarkup(
@@ -109,7 +109,7 @@ async def process_topup_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число больше 0")
 
-# --- 👨‍ АДМИН-ПАНЕЛЬ ---
+# --- 👨‍💼 АДМИН-ПАНЕЛЬ ---
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
@@ -160,7 +160,7 @@ async def admin_approve(call: CallbackQuery):
     
     req_id = int(call.data.split("_")[1])
     
-    # 1. Получаем детали заявки (кто и сколько должен заплатить)
+    # 1. Получаем детали заявки
     details = await get_request_details(req_id)
     if not details:
         await call.answer("Заявка не найдена!", show_alert=True)
@@ -182,7 +182,7 @@ async def admin_approve(call: CallbackQuery):
             await call.bot.send_message(user_id, f"✅ Заявка #{req_id} одобрена!\n💰 С вашего счёта списано {price}₽.")
         except: pass
     else:
-        # 4. Если денег нет (пользователь потратил их пока ждал)
+        # 4. Если денег нет
         await call.answer("Ошибка: У клиента недостаточно средств!", show_alert=True)
         try:
             await call.bot.send_message(user_id, f"❌ Заявка #{req_id} отклонена: Недостаточно средств на счёте.")
@@ -196,13 +196,12 @@ async def admin_reject(call: CallbackQuery):
     await call.answer("Заявка отклонена", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"❌ Заявка #{req_id}", f"❌ Заявка #{req_id} [ОТКЛОНЕНО]"))
     
-    # Получаем ID пользователя для уведомления
     details = await get_request_details(req_id)
     if details:
         try: await call.bot.send_message(details['user_id'], f"❌ Ваша заявка #{req_id} отклонена администратором.")
         except: pass
 
-# --- 🐕 ЛОГИКА ЗАЯВОК С ПРОВЕРКОЙ БАЛАНСА ---
+# --- 🐕 ЛОГИКА ЗАЯВОК ---
 
 @dp.message(WalkState.date)
 async def process_walk_date(message: Message, state: FSMContext):
@@ -235,8 +234,8 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         price = (duration // 10) * 50
         data = await state.get_data()
         
-        # ✅ ИСПРАВЛЕНИЕ СИНТАКСИСА ЗДЕСЬ
-        if 'walk_date' not in data or 'walk_time' not in data:
+        # ✅ ИСПРАВЛЕНИЕ СИНТАКСИСА
+        if 'walk_date' not in data or 'walk_time' not in 
             await call.message.answer("❌ Данные потеряны. Попробуйте снова.")
             await state.clear()
             return
@@ -253,7 +252,7 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
             await state.clear()
             return
 
-        # Если денег хватает — создаем заявку
+        # Создаем заявку
         await create_walk_request(call.from_user.id, data['walk_date'], data['walk_time'], duration, price)
         await call.message.edit_text(f"✅ Заявка создана!\n📅 {data['walk_date']} {data['walk_time']}\n💰 Стоимость: {price} ₽ (Будет списано при одобрении)")
         await state.clear()

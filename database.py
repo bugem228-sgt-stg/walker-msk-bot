@@ -1,4 +1,4 @@
-# database.py — Обновленная версия (списание баланса + проверка)
+# database.py — Версия с автосписанием и проверками
 import asyncpg
 import os
 from datetime import datetime
@@ -58,7 +58,7 @@ async def update_balance(user_id: int, amount: float):
             amount, user_id
         )
 
-# 🔥 НОВАЯ ФУНКЦИЯ: Списание средств (возвращает True если успешно, False если нет денег)
+# 🔥 НОВАЯ ФУНКЦИЯ: Списание средств (возвращает True если успешно)
 async def deduct_balance(user_id: int, amount: float) -> bool:
     async with pool.acquire() as conn:
         # Списываем только если баланс >= суммы
@@ -66,7 +66,7 @@ async def deduct_balance(user_id: int, amount: float) -> bool:
             "UPDATE users SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1",
             amount, user_id
         )
-        # Если обновилась 1 строка — значит деньги были. Если 0 — не было.
+        # Если обновилась 1 строка — значит деньги были.
         return "UPDATE 1" in result
 
 async def create_walk_request(user_id: int, date: str, time: str, duration: int, price: float):

@@ -1,4 +1,4 @@
-# main.py — ВЕРСИЯ 24/7 + 10 МИНУТ + ТАРИФЫ
+# main.py — ВЕРСИЯ 24/7 + 10 МИНУТ + ТАРИФЫ (ИСПРАВЛЕНА)
 import asyncio
 import os
 import traceback
@@ -16,7 +16,7 @@ from database import (
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# ✅ Ваш ID админа (запомнен)
+# ✅ Ваш ID админа
 ADMIN_ID = 400063653 
 
 # --- 🎨 КЛАВИАТУРЫ ---
@@ -31,13 +31,7 @@ main_kb = ReplyKeyboardMarkup(
 
 # 💰 ТАРИФЫ (10 мин = 200 руб)
 DURATION_PRICES = {
-    10: 200,
-    20: 400,
-    30: 600,
-    40: 800,
-    50: 1000,
-    60: 1200,
-    90: 1800
+    10: 200, 20: 400, 30: 600, 40: 800, 50: 1000, 60: 1200, 90: 1800
 }
 
 def get_duration_kb():
@@ -45,7 +39,7 @@ def get_duration_kb():
     row = []
     for dur, price in DURATION_PRICES.items():
         row.append(InlineKeyboardButton(text=f"{dur} мин ({price}₽)", callback_data=f"walk_{dur}"))
-        if len(row) == 2: # По 2 кнопки в ряд
+        if len(row) == 2:
             kb.inline_keyboard.append(row)
             row = []
     if row:
@@ -71,7 +65,6 @@ def get_calendar_kb():
     return kb
 
 def get_hour_kb():
-    """Выбор часа (00-23)"""
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     row = []
     for h in range(24):
@@ -85,7 +78,6 @@ def get_hour_kb():
     return kb
 
 def get_minute_kb():
-    """Выбор минут (00-50 с шагом 10)"""
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     row = []
     for m in range(0, 60, 10):
@@ -102,7 +94,7 @@ def get_minute_kb():
 class TopupState(StatesGroup):
     amount = State()
 
-# --- 📝 ХЕНДЛЕРЫ ПОЛЬЗОВАТЕЛЯ ---
+# --- 📝 ХЕНДЛЕРЫ ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -233,10 +225,10 @@ async def admin_reject(call: CallbackQuery):
         try: await call.bot.send_message(details['user_id'], f"❌ Ваша заявка #{req_id} отклонена администратором.")
         except: pass
 
-# --- 🐕 НОВЫЙ ПОТОК ЗАЯВОК (КАЛЕНДАРЬ -> ЧАС -> МИНУТЫ -> ДЛИТЕЛЬНОСТЬ) ---
+# --- 🐕 ПОТОК ЗАЯВОК ---
 @dp.message(F.text == "🐕 Заявка на выгул")
 async def cmd_walk_menu(message: Message, state: FSMContext):
-    await message.answer("📅 Выберите дату выгула (следующие 14 дней):", reply_markup=get_calendar_kb())
+    await message.answer("📅 Выберите дату выгула:", reply_markup=get_calendar_kb())
     await state.clear()
 
 @dp.callback_query(F.data.startswith("cal_"))
@@ -258,7 +250,6 @@ async def process_minute_click(call: CallbackQuery, state: FSMContext):
     await call.answer()
     minute = call.data.split("_", 1)[1]
     data = await state.get_data()
-    
     date_str = data.get('walk_date')
     hour = data.get('walk_hour')
     
@@ -267,12 +258,10 @@ async def process_minute_click(call: CallbackQuery, state: FSMContext):
         await state.clear()
         return
 
-    # Формируем итоговое время для проверки и сохранения
     time_str = f"{hour}:{minute}"
     selected_dt = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
     min_dt = datetime.now() + timedelta(hours=4)
 
-    # 🔥 ПРОВЕРКА ПРАВИЛА 4 ЧАСОВ
     if selected_dt <= min_dt:
         await call.message.answer(
             f"❌ Невозможно оформить заявку!\n\n"
@@ -292,18 +281,15 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
     await call.answer()
     try:
         duration = int(call.data.split("_")[1])
-        # 💰 НОВАЯ ФОРМУЛА ЦЕНЫ (10 мин = 200 руб)
         price = DURATION_PRICES.get(duration, (duration // 10) * 200)
-        
         data = await state.get_data()
         
-        # ✅ ИСПРАВЛЕННЫЙ СИНТАКСИС
-        if 'walk_date' not in data or 'walk_time' not in 
+        # ✅ ИСПРАВЛЕНО: добавлено data: в конце
+        if 'walk_date' not in data or 'walk_time' not in data:
             await call.message.answer("❌ Данные потеряны. Попробуйте снова.", reply_markup=main_kb)
             await state.clear()
             return
 
-        # 🔥 ПРОВЕРКА БАЛАНСА
         balance = await get_balance(call.from_user.id)
         if balance < price:
             await call.message.answer(

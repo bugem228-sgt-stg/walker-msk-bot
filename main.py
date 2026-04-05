@@ -1,19 +1,23 @@
-# main.py — С ПОПОЛНЕНИЕМ И АДМИНКОЙ
+# main.py — ПОЛНАЯ ВЕРСИЯ С МОЩНОЙ АДМИНКОЙ
 import asyncio
 import os
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from database import init_db, add_user, get_balance, update_balance, create_walk_request, get_user_requests
+from database import (
+    init_db, add_user, get_balance, update_balance, create_walk_request, get_user_requests,
+    get_pending_requests, update_request_status, get_statistics
+)
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# --- 🔢 АДМИН ID (замените на свой Telegram ID) ---
-ADMIN_ID = 400063653  # ← ВПИШИТЕ СЮДА ВАШ ID (узнайте у @userinfobot)
+# --- 🔐 НАСТРОЙКИ ---
+# ⚠️ ВАЖНО: Впишите сюда свой Telegram ID, иначе админка не откроется!
+ADMIN_ID = 400063653 # Замените на ваш ID (узнайте у @userinfobot)
 
 # --- 🎨 КЛАВИАТУРЫ ---
 main_kb = ReplyKeyboardMarkup(
@@ -25,6 +29,13 @@ main_kb = ReplyKeyboardMarkup(
     input_field_placeholder="Выберите действие..."
 )
 
+# Меню Админа
+admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🔥 Ожидающие заявки", callback_data="admin_pending")],
+    [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
+])
+
+# Кнопки длительности для пользователя
 def get_duration_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="30 мин (150₽)", callback_data="walk_30"),
@@ -34,7 +45,7 @@ def get_duration_kb():
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_walk")]
     ])
 
-# --- 🔹 FSM ---
+# --- 🔹 FSM СОСТОЯНИЯ ---
 class WalkState(StatesGroup):
     date = State()
     time = State()
@@ -42,7 +53,7 @@ class WalkState(StatesGroup):
 class TopupState(StatesGroup):
     amount = State()
 
-# --- 📝 ХЕНДЛЕРЫ ---
+# ---  ХЕНДЛЕРЫ ПОЛЬЗОВАТЕЛЯ ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -53,7 +64,7 @@ async def cmd_start(message: Message):
 
 @dp.message(F.text == "🐕 Заявка на выгул")
 async def cmd_walk_menu(message: Message, state: FSMContext):
-    await message.answer("📅 Напишите дату выгула (ДД.ММ.ГГГГ):", 
+    await message.answer("📅 Напишите дату (ДД.ММ.ГГГГ):", 
                          reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True))
     await state.set_state(WalkState.date)
 
@@ -70,14 +81,13 @@ async def cmd_mywalks_menu(message: Message):
         return
     text = "📋 Ваши заявки:\n\n"
     for req in requests:
-        status_emoji = "⏳" if req['status'] == 'pending' else "✅" if req['status'] == 'approved' else "❌"
-        text += f"{status_emoji} #{req['id']} | {req['walk_date']} в {req['walk_time']} ({req['duration_min']} мин)\n"
+        emoji = "⏳" if req['status'] == 'pending' else "✅" if req['status'] == 'approved' else "❌"
+        text += f"{emoji} #{req['id']} | {req['walk_date']} в {req['walk_time']} ({req['duration_min']} мин)\n"
     await message.answer(text, reply_markup=main_kb)
 
-# 🔥 ПОПОЛНЕНИЕ БАЛАНСА (рабочее!)
 @dp.message(F.text == "💰 Пополнить")
 async def cmd_topup_menu(message: Message, state: FSMContext):
-    await message.answer("💳 Напишите сумму для пополнения (например: 500)\n💡 После оплаты админ зачислит средства", 
+    await message.answer("💳 Введите сумму пополнения:", 
                          reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True))
     await state.set_state(TopupState.amount)
 
@@ -87,91 +97,99 @@ async def process_topup_amount(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("Отменено.", reply_markup=main_kb)
         return
-    
     try:
         amount = float(message.text)
-        if amount <= 0:
-            await message.answer("❌ Сумма должна быть больше 0")
-            return
-        
-        # Отправляем заявку админу
-        await message.answer(f"✅ Заявка на пополнение {amount}₽ отправлена админу!\n💡 Напишите ему: @Sgt_stg", reply_markup=main_kb)
+        if amount <= 0: raise ValueError
         
         # Уведомляем админа
         await dp.bot.send_message(
             ADMIN_ID,
-            f"💰 <b>Запрос на пополнение!</b>\n\n"
-            f"👤 Пользователь: @{message.from_user.username or 'не указан'}\n"
-            f"🔢 ID: <code>{message.from_user.id}</code>\n"
-            f"💵 Сумма: <b>{amount} ₽</b>\n\n"
-            f"Для зачисления:\n<code>/addbalance {message.from_user.id} {int(amount)}</code>",
+            f"💰 <b>Пополнение!</b>\n👤 @{message.from_user.username or 'anon'} (ID: {message.from_user.id})\n💵 Сумма: <b>{amount} ₽</b>\n\n/cmd_addbal {message.from_user.id} {int(amount)}",
             parse_mode="HTML"
         )
+        await message.answer(f"✅ Заявка на {amount}₽ отправлена админу!", reply_markup=main_kb)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите корректное число (например: 500)")
+        await message.answer("❌ Введите число больше 0")
 
-# --- АДМИН-КОМАНДЫ ---
+# --- 👨‍ АДМИН-ПАНЕЛЬ ---
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    await message.answer(
-        "👨‍💼 <b>Админ-панель</b>\n\n"
-        "📊 <b>Команды:</b>\n"
-        "<code>/users</code> — Список всех пользователей\n"
-        "<code>/addbalance USER_ID AMOUNT</code> — Добавить баланс\n"
-        "<code>/pending</code> —Pending заявки\n\n"
-        "📱 Или используйте кнопки ниже 👇",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Pending заявки", callback_data="admin_pending")],
-            [InlineKeyboardButton(text="👥 Все пользователи", callback_data="admin_users")]
-        ])
+    if message.from_user.id != ADMIN_ID: return
+    await message.answer("🔐 <b>Панель Администратора</b>", reply_markup=admin_kb, parse_mode="HTML")
+
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    stats = await get_statistics()
+    await call.message.answer(
+        f"📊 <b>Статистика</b>\n\n"
+        f"👥 Пользователей: {stats['users']}\n"
+        f"💰 Всего на балансах: {stats['balance']} ₽\n"
+        f"🔥 Заявок в ожидании: {stats['pending']}",
+        parse_mode="HTML"
     )
 
-# Показ pending заявок админу
 @dp.callback_query(F.data == "admin_pending")
 async def admin_show_pending(call: CallbackQuery):
-    if call.from_user.id != ADMIN_ID:
-        await call.answer("❌ Доступ запрещён", show_alert=True)
-        return
+    if call.from_user.id != ADMIN_ID: return
+    requests = await get_pending_requests()
     
-    # Здесь нужен запрос к БД для получения всех pending заявок
-    await call.answer("Функция в разработке! Используйте /pending", show_alert=True)
-
-@dp.message(Command("users"))
-async def cmd_users(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if not requests:
+        await call.answer("Заявок пока нет!", show_alert=True)
         return
-    # Заглушка — нужна функция get_all_users() в database.py
-    await message.answer("📊 Список пользователей (в разработке)")
 
-@dp.message(Command("addbalance"))
-async def cmd_add_balance(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
-        return
+    text = "📋 <b>Заявки на выгул:</b>\n\n"
+    keyboard = []
     
+    for req in requests:
+        # Формируем текст заявки
+        text += f"🆔 #{req['id']} | 📅 {req['walk_date']} {req['walk_time']}\n"
+        text += f"   ⏱ {req['duration_min']} мин | 💰 {req['price']} ₽\n"
+        text += f"   👤 User ID: <code>{req['user_id']}</code>\n\n"
+        
+        # Добавляем кнопки управления для каждой заявки
+        keyboard.append([
+            InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}"),
+            InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}")
+        ])
+
+    await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("approve_"))
+async def admin_approve(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    req_id = int(call.data.split("_")[1])
+    
+    await update_request_status(req_id, "approved")
+    await call.answer("Заявка одобрена!", show_alert=True)
+    
+    # Обновляем сообщение админа
+    await call.message.edit_text(call.message.text.replace(f"✅ Заявка #{req_id}", f"✅ Заявка #{req_id} [ОДОБРЕНО]"))
+    
+    # Уведомляем пользователя
     try:
-        user_id = int(command.args.split()[0])
-        amount = float(command.args.split()[1])
-        
-        await update_balance(user_id, amount)
-        new_balance = await get_balance(user_id)
-        
-        await message.answer(f"✅ Зачислено {amount}₽ пользователю {user_id}\n💳 Новый баланс: {new_balance}₽")
-        
-        # Уведомляем пользователя
-        try:
-            await dp.bot.send_message(user_id, f"💰 Админ зачислил {amount}₽ на ваш счёт!\n💳 Баланс: {new_balance}₽")
-        except:
-            pass
-    except (IndexError, ValueError):
-        await message.answer("❌ Использование: /addbalance USER_ID AMOUNT\nПример: /addbalance 123456789 500")
+        await dp.bot.send_message(call.from_user.id, f"✅ Ваша заявка #{req_id} одобрена! Ждём вас на выгуле.")
+    except: pass
 
-# --- FSM ДЛЯ ЗАЯВОК (как было) ---
+@dp.callback_query(F.data.startswith("reject_"))
+async def admin_reject(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID: return
+    req_id = int(call.data.split("_")[1])
+    
+    await update_request_status(req_id, "rejected")
+    await call.answer("Заявка отклонена", show_alert=True)
+    
+    # Обновляем сообщение админа
+    await call.message.edit_text(call.message.text.replace(f"❌ Заявка #{req_id}", f"❌ Заявка #{req_id} [ОТКЛОНЕНО]"))
+    
+    # Уведомляем пользователя
+    try:
+        await dp.bot.send_message(call.from_user.id, f"❌ Ваша заявка #{req_id} отклонена. Баланс не списан.")
+    except: pass
+
+# --- 🐕 ЛОГИКА СОЗДАНИЯ ЗАЯВКИ ---
 
 @dp.message(WalkState.date)
 async def process_walk_date(message: Message, state: FSMContext):
@@ -182,19 +200,19 @@ async def process_walk_date(message: Message, state: FSMContext):
     try:
         datetime.strptime(message.text, "%d.%m.%Y")
         await state.update_data(walk_date=message.text)
-        await message.answer("⏰ Теперь время (ЧЧ:ММ):")
+        await message.answer("⏰ Время (ЧЧ:ММ):")
         await state.set_state(WalkState.time)
     except ValueError:
-        await message.answer("❌ Ошибка формата. Пиши так: 05.04.2026")
+        await message.answer("❌ Формат: ДД.ММ.ГГГГ")
 
 @dp.message(WalkState.time)
 async def process_walk_time(message: Message, state: FSMContext):
     try:
         datetime.strptime(message.text, "%H:%M")
         await state.update_data(walk_time=message.text)
-        await message.answer("⏱ Выбери длительность:", reply_markup=get_duration_kb())
+        await message.answer("⏱ Длительность:", reply_markup=get_duration_kb())
     except ValueError:
-        await message.answer("❌ Ошибка. Пиши так: 10:00")
+        await message.answer("❌ Формат: ЧЧ:ММ")
 
 @dp.callback_query(F.data.startswith("walk_"))
 async def process_duration_click(call: CallbackQuery, state: FSMContext):
@@ -203,35 +221,26 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         duration = int(call.data.split("_")[1])
         price = (duration // 10) * 50
         data = await state.get_data()
-
+        
         if 'walk_date' not in data or 'walk_time' not in data:
-            await call.message.answer("❌ Данные потеряны. Попробуйте с /walk")
+            await call.message.answer("❌ Ошибка данных. Попробуйте снова.")
             await state.clear()
             return
 
-        await create_walk_request(
-            user_id=call.from_user.id,
-            date=data['walk_date'],
-            time=data['walk_time'],
-            duration=duration,
-            price=price
-        )
-
-        await call.message.edit_text(
-            f"✅ Заявка создана!\n📅 {data['walk_date']} в {data['walk_time']}\n⏱ {duration} мин\n💰 {price} ₽"
-        )
+        await create_walk_request(call.from_user.id, data['walk_date'], data['walk_time'], duration, price)
+        
+        await call.message.edit_text(f"✅ Заявка создана!\n📅 {data['walk_date']} {data['walk_time']}\n💰 {price} ₽")
         await state.clear()
         await call.message.answer("Главное меню:", reply_markup=main_kb)
-        
     except Exception as e:
-        print(f"❌ ОШИБКА: {e}")
-        await call.message.answer(f"❌ Ошибка при сохранении.")
+        print(e)
+        await call.message.answer("❌ Ошибка сохранения.")
 
 @dp.callback_query(F.data == "cancel_walk")
 async def cancel_walk_click(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.clear()
-    await call.message.edit_text("❌ Заявка отменена.")
+    await call.message.edit_text("❌ Отменено.")
     await call.message.answer("Главное меню:", reply_markup=main_kb)
 
 @dp.message(F.text == "❌ Отмена")
@@ -244,7 +253,7 @@ async def main():
     if not token: return
     await init_db()
     bot = Bot(token=token)
-    print("✅ Бот с админкой запущен!")
+    print("✅ Бот с Админкой запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

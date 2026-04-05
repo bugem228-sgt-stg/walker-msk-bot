@@ -1,4 +1,4 @@
-# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (с работающим /addbalance)
+# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (Проверка баланса + Автосписание)
 import asyncio
 import os
 from datetime import datetime
@@ -9,14 +9,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from database import (
-    init_db, add_user, get_balance, update_balance, create_walk_request, get_user_requests,
-    get_pending_requests, update_request_status, get_statistics
+    init_db, add_user, get_balance, update_balance, deduct_balance, create_walk_request, get_user_requests,
+    get_pending_requests, update_request_status, get_statistics, get_request_details
 )
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# ⚠️ ВАЖНО: Впишите сюда свой Telegram ID (число, без кавычек)
-# Узнать можно у бота @userinfobot
+# ⚠️ ВАЖНО: Впишите сюда свой Telegram ID
 ADMIN_ID = 400063653  # <-- ЗАМЕНИТЕ НА ВАШ ID!
 
 # --- 🎨 КЛАВИАТУРЫ ---
@@ -80,7 +79,7 @@ async def cmd_mywalks_menu(message: Message):
 
 @dp.message(F.text == "💰 Пополнить")
 async def cmd_topup_menu(message: Message, state: FSMContext):
-    await message.answer("💳 Введите сумму пополнения (например: 500):", 
+    await message.answer("💳 Введите сумму пополнения:", 
                          reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True))
     await state.set_state(TopupState.amount)
 
@@ -90,12 +89,9 @@ async def process_topup_amount(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("Отменено.", reply_markup=main_kb)
         return
-    
     try:
         amount = float(message.text)
-        if amount <= 0:
-            await message.answer("❌ Сумма должна быть больше 0")
-            return
+        if amount <= 0: raise ValueError
         
         try:
             await message.bot.send_message(
@@ -106,13 +102,12 @@ async def process_topup_amount(message: Message, state: FSMContext):
                 f"Для зачисления:\n<code>/addbalance {message.from_user.id} {int(amount)}</code>",
                 parse_mode="HTML"
             )
-        except Exception as e:
-            print(f"⚠️ Не удалось уведомить админа: {e}")
+        except Exception as e: print(f"⚠️ Ошибка уведомления: {e}")
 
-        await message.answer(f"✅ Заявка на {amount}₽ отправлена!\n💡 Админ зачислит средства вручную.", reply_markup=main_kb)
+        await message.answer(f"✅ Заявка на {amount}₽ отправлена!", reply_markup=main_kb)
         await state.clear()
     except ValueError:
-        await message.answer("❌ Введите корректное число")
+        await message.answer("❌ Введите число больше 0")
 
 # --- 👨‍💼 АДМИН-ПАНЕЛЬ ---
 
@@ -152,69 +147,62 @@ async def admin_show_pending(call: CallbackQuery):
         text += f"   ⏱ {req['duration_min']} мин | 💰 {req['price']} ₽\n"
         text += f"   👤 User ID: <code>{req['user_id']}</code>\n\n"
         keyboard.append([
-            InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}_{req['user_id']}"),
-            InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}_{req['user_id']}")
+            InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}"),
+            InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}")
         ])
 
     await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
 
+# 🔥 ИСПРАВЛЕННАЯ ЛОГИКА ОДОБРЕНИЯ (со списанием)
 @dp.callback_query(F.data.startswith("approve_"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    _, req_id, user_id = call.data.split("_")
-    await update_request_status(int(req_id), "approved")
-    await call.answer("Заявка одобрена!", show_alert=True)
-    await call.message.edit_text(call.message.text.replace(f"✅ Заявка #{req_id}", f"✅ Заявка #{req_id} [ОДОБРЕНО]"))
-    try: await call.bot.send_message(int(user_id), f"✅ Ваша заявка #{req_id} одобрена!")
-    except: pass
+    
+    req_id = int(call.data.split("_")[1])
+    
+    # 1. Получаем детали заявки (кто и сколько должен заплатить)
+    details = await get_request_details(req_id)
+    if not details:
+        await call.answer("Заявка не найдена!", show_alert=True)
+        return
+    
+    user_id = details['user_id']
+    price = details['price']
+    
+    # 2. Пытаемся списать баланс
+    success = await deduct_balance(user_id, price)
+    
+    if success:
+        # 3. Если списалось успешно — меняем статус
+        await update_request_status(req_id, "approved")
+        await call.answer("Заявка одобрена и оплата проведена!", show_alert=True)
+        await call.message.edit_text(call.message.text.replace(f"✅ Заявка #{req_id}", f"✅ Заявка #{req_id} [ОПЛАЧЕНО]"))
+        
+        try:
+            await call.bot.send_message(user_id, f"✅ Заявка #{req_id} одобрена!\n💰 С вашего счёта списано {price}₽.")
+        except: pass
+    else:
+        # 4. Если денег нет (пользователь потратил их пока ждал)
+        await call.answer("Ошибка: У клиента недостаточно средств!", show_alert=True)
+        try:
+            await call.bot.send_message(user_id, f"❌ Заявка #{req_id} отклонена: Недостаточно средств на счёте.")
+        except: pass
 
 @dp.callback_query(F.data.startswith("reject_"))
 async def admin_reject(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    _, req_id, user_id = call.data.split("_")
-    await update_request_status(int(req_id), "rejected")
+    req_id = int(call.data.split("_")[1])
+    await update_request_status(req_id, "rejected")
     await call.answer("Заявка отклонена", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"❌ Заявка #{req_id}", f"❌ Заявка #{req_id} [ОТКЛОНЕНО]"))
-    try: await call.bot.send_message(int(user_id), f"❌ Ваша заявка #{req_id} отклонена.")
-    except: pass
-
-# 🔥 ДОБАВЛЕННЫЙ ОБРАБОТЧИК /addbalance
-@dp.message(Command("addbalance"))
-async def cmd_add_balance(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
-        return
     
-    try:
-        if not command.args:
-            await message.answer("❌ Использование: /addbalance ID СУММА\nПример: /addbalance 123456789 500")
-            return
-            
-        # Убираем кавычки если пользователь их случайно поставил
-        clean_args = command.args.replace('"', '').replace("'", "").split()
-        
-        if len(clean_args) != 2:
-            await message.answer("❌ Нужно указать ID и сумму через пробел.\nПример: /addbalance 123456789 500")
-            return
-            
-        user_id = int(clean_args[0])
-        amount = float(clean_args[1])
-        
-        await update_balance(user_id, amount)
-        new_balance = await get_balance(user_id)
-        
-        await message.answer(f"✅ Зачислено {amount}₽ пользователю {user_id}\n💳 Новый баланс: {new_balance}₽")
-        
-        try:
-            await message.bot.send_message(user_id, f"💰 Админ зачислил {amount}₽ на ваш счёт!\n💳 Баланс: {new_balance}₽")
-        except:
-            pass
-            
-    except ValueError:
-        await message.answer("❌ ID и сумма должны быть числами.")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+    # Получаем ID пользователя для уведомления
+    details = await get_request_details(req_id)
+    if details:
+        try: await call.bot.send_message(details['user_id'], f"❌ Ваша заявка #{req_id} отклонена администратором.")
+        except: pass
 
-# --- 🐕 ЛОГИКА ЗАЯВОК ---
+# --- 🐕 ЛОГИКА ЗАЯВОК С ПРОВЕРКОЙ БАЛАНСА ---
 
 @dp.message(WalkState.date)
 async def process_walk_date(message: Message, state: FSMContext):
@@ -247,13 +235,26 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         price = (duration // 10) * 50
         data = await state.get_data()
         
-        if 'walk_date' not in data or 'walk_time' not in data:
+        if 'walk_date' not in data or 'walk_time' not in 
             await call.message.answer("❌ Данные потеряны. Попробуйте снова.")
             await state.clear()
             return
 
+        # 🔥 ПРОВЕРКА БАЛАНСА ПЕРЕД СОЗДАНИЕМ
+        balance = await get_balance(call.from_user.id)
+        if balance < price:
+            await call.message.answer(
+                f"❌ Недостаточно средств!\n"
+                f"На счёте: {balance}₽, Нужно: {price}₽\n"
+                f"Пополните баланс: /topup",
+                reply_markup=main_kb
+            )
+            await state.clear()
+            return
+
+        # Если денег хватает — создаем заявку
         await create_walk_request(call.from_user.id, data['walk_date'], data['walk_time'], duration, price)
-        await call.message.edit_text(f"✅ Заявка создана!\n📅 {data['walk_date']} {data['walk_time']}\n💰 {price} ₽")
+        await call.message.edit_text(f"✅ Заявка создана!\n📅 {data['walk_date']} {data['walk_time']}\n💰 Стоимость: {price} ₽ (Будет списано при одобрении)")
         await state.clear()
         await call.message.answer("Главное меню:", reply_markup=main_kb)
     except Exception as e:
@@ -272,12 +273,34 @@ async def cmd_cancel_text(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Отменено.", reply_markup=main_kb)
 
+@dp.message(Command("addbalance"))
+async def cmd_add_balance(message: Message, command: CommandObject):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        if not command.args:
+            await message.answer("❌ Использование: /addbalance ID СУММА")
+            return
+        clean_args = command.args.replace('"', '').replace("'", "").split()
+        if len(clean_args) != 2:
+            await message.answer("❌ Нужно указать ID и сумму через пробел.")
+            return
+        user_id = int(clean_args[0])
+        amount = float(clean_args[1])
+        
+        await update_balance(user_id, amount)
+        new_balance = await get_balance(user_id)
+        
+        await message.answer(f"✅ Зачислено {amount}₽ пользователю {user_id}\n💳 Баланс: {new_balance}₽")
+        try: await message.bot.send_message(user_id, f"💰 Админ зачислил {amount}₽. Баланс: {new_balance}₽")
+        except: pass
+    except ValueError: await message.answer("❌ Ошибка формата.")
+
 async def main():
     token = os.getenv("BOT_TOKEN")
     if not token: return
     await init_db()
     bot = Bot(token=token)
-    print("✅ Бот с Админкой запущен!")
+    print("✅ Бот с автосписанием запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

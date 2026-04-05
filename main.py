@@ -95,7 +95,7 @@ async def process_topup_amount(message: Message, state: FSMContext):
             return
         
         # Отправляем заявку админу
-        await message.answer(f"✅ Заявка на пополнение {amount}₽ отправлена админу!\n💡 Напишите ему: @ваш_юзернейм", reply_markup=main_kb)
+        await message.answer(f"✅ Заявка на пополнение {amount}₽ отправлена админу!\n💡 Напишите ему: @Sgt_stg", reply_markup=main_kb)
         
         # Уведомляем админа
         await dp.bot.send_message(

@@ -235,7 +235,7 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         data = await state.get_data()
         
         # ✅ ИСПРАВЛЕНИЕ СИНТАКСИСА
-        if 'walk_date' not in data or 'walk_time' not in 
+        if 'walk_date' not in data or 'walk_time' not in data:
             await call.message.answer("❌ Данные потеряны. Попробуйте снова.")
             await state.clear()
             return

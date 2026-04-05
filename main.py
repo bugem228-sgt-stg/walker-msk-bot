@@ -1,7 +1,8 @@
-# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (Ваш ID: 400063653)
+# main.py — ВЕРСИЯ 24/7 + 10 МИНУТ + ТАРИФЫ
 import asyncio
 import os
-from datetime import datetime
+import traceback
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandObject
@@ -15,7 +16,7 @@ from database import (
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# ✅ АВТОМАТИЧЕСКИ ПОДСТАВЛЕН ВАШ ID
+# ✅ Ваш ID админа (запомнен)
 ADMIN_ID = 400063653 
 
 # --- 🎨 КЛАВИАТУРЫ ---
@@ -28,37 +29,86 @@ main_kb = ReplyKeyboardMarkup(
     input_field_placeholder="Выберите действие..."
 )
 
+# 💰 ТАРИФЫ (10 мин = 200 руб)
+DURATION_PRICES = {
+    10: 200,
+    20: 400,
+    30: 600,
+    40: 800,
+    50: 1000,
+    60: 1200,
+    90: 1800
+}
+
 def get_duration_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="30 мин (150₽)", callback_data="walk_30"),
-         InlineKeyboardButton(text="40 мин (200₽)", callback_data="walk_40")],
-        [InlineKeyboardButton(text="50 мин (250₽)", callback_data="walk_50"),
-         InlineKeyboardButton(text="60 мин (300₽)", callback_data="walk_60")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_walk")]
-    ])
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    row = []
+    for dur, price in DURATION_PRICES.items():
+        row.append(InlineKeyboardButton(text=f"{dur} мин ({price}₽)", callback_data=f"walk_{dur}"))
+        if len(row) == 2: # По 2 кнопки в ряд
+            kb.inline_keyboard.append(row)
+            row = []
+    if row:
+        kb.inline_keyboard.append(row)
+    kb.inline_keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_walk")])
+    return kb
+
+def get_calendar_kb():
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    today = datetime.now()
+    row = []
+    for i in range(1, 15):
+        day = today + timedelta(days=i)
+        date_str = day.strftime("%d.%m.%Y")
+        btn_text = f"{day.strftime('%d')} {day.strftime('%a')}"
+        row.append(InlineKeyboardButton(text=btn_text, callback_data=f"cal_{date_str}"))
+        if len(row) == 4:
+            kb.inline_keyboard.append(row)
+            row = []
+    if row:
+        kb.inline_keyboard.append(row)
+    kb.inline_keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_walk")])
+    return kb
+
+def get_hour_kb():
+    """Выбор часа (00-23)"""
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    row = []
+    for h in range(24):
+        row.append(InlineKeyboardButton(text=f"{h:02d}:00", callback_data=f"hour_{h:02d}"))
+        if len(row) == 4:
+            kb.inline_keyboard.append(row)
+            row = []
+    if row:
+        kb.inline_keyboard.append(row)
+    kb.inline_keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_walk")])
+    return kb
+
+def get_minute_kb():
+    """Выбор минут (00-50 с шагом 10)"""
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    row = []
+    for m in range(0, 60, 10):
+        row.append(InlineKeyboardButton(text=f"{m:02d}", callback_data=f"min_{m:02d}"))
+        if len(row) == 3:
+            kb.inline_keyboard.append(row)
+            row = []
+    if row:
+        kb.inline_keyboard.append(row)
+    kb.inline_keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_walk")])
+    return kb
 
 # --- 🔹 FSM СОСТОЯНИЯ ---
-class WalkState(StatesGroup):
-    date = State()
-    time = State()
-
 class TopupState(StatesGroup):
     amount = State()
 
 # --- 📝 ХЕНДЛЕРЫ ПОЛЬЗОВАТЕЛЯ ---
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or "Друг"
     await add_user(user_id, username)
-    await message.answer(f"🐕 Привет, {username}! Используй меню ниже 👇", reply_markup=main_kb)
-
-@dp.message(F.text == "🐕 Заявка на выгул")
-async def cmd_walk_menu(message: Message, state: FSMContext):
-    await message.answer("📅 Напишите дату (ДД.ММ.ГГГГ):", 
-                         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True))
-    await state.set_state(WalkState.date)
+    await message.answer(f"🐕 Привет, {username}! Круглосуточный выгул! 🌙\nИспользуй меню ниже 👇", reply_markup=main_kb)
 
 @dp.message(F.text == "💳 Баланс")
 async def cmd_balance_menu(message: Message):
@@ -109,8 +159,7 @@ async def process_topup_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число больше 0")
 
-# --- 👨‍💼 АДМИН-ПАНЕЛЬ ---
-
+# --- 👨‍ АДМИН-ПАНЕЛЬ ---
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
     if message.from_user.id != ADMIN_ID: return
@@ -141,7 +190,6 @@ async def admin_show_pending(call: CallbackQuery):
 
     text = "📋 <b>Заявки на выгул:</b>\n\n"
     keyboard = []
-    
     for req in requests:
         text += f"🆔 #{req['id']} | 📅 {req['walk_date']} {req['walk_time']}\n"
         text += f"   ⏱ {req['duration_min']} мин | 💰 {req['price']} ₽\n"
@@ -150,42 +198,27 @@ async def admin_show_pending(call: CallbackQuery):
             InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}"),
             InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}")
         ])
-
     await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
 
-# 🔥 ЛОГИКА ОДОБРЕНИЯ (со списанием баланса)
 @dp.callback_query(F.data.startswith("approve_"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    
     req_id = int(call.data.split("_")[1])
-    
-    # 1. Получаем детали заявки
     details = await get_request_details(req_id)
     if not details:
         await call.answer("Заявка не найдена!", show_alert=True)
         return
     
-    user_id = details['user_id']
-    price = details['price']
-    
-    # 2. Пытаемся списать баланс
-    success = await deduct_balance(user_id, price)
-    
+    success = await deduct_balance(details['user_id'], details['price'])
     if success:
-        # 3. Если списалось успешно — меняем статус
         await update_request_status(req_id, "approved")
         await call.answer("Заявка одобрена и оплата проведена!", show_alert=True)
         await call.message.edit_text(call.message.text.replace(f"✅ Заявка #{req_id}", f"✅ Заявка #{req_id} [ОПЛАЧЕНО]"))
-        
-        try:
-            await call.bot.send_message(user_id, f"✅ Заявка #{req_id} одобрена!\n💰 С вашего счёта списано {price}₽.")
+        try: await call.bot.send_message(details['user_id'], f"✅ Заявка #{req_id} одобрена!\n💰 С вашего счёта списано {details['price']}₽.")
         except: pass
     else:
-        # 4. Если денег нет
         await call.answer("Ошибка: У клиента недостаточно средств!", show_alert=True)
-        try:
-            await call.bot.send_message(user_id, f"❌ Заявка #{req_id} отклонена: Недостаточно средств на счёте.")
+        try: await call.bot.send_message(details['user_id'], f"❌ Заявка #{req_id} отклонена: Недостаточно средств на счёте.")
         except: pass
 
 @dp.callback_query(F.data.startswith("reject_"))
@@ -195,52 +228,82 @@ async def admin_reject(call: CallbackQuery):
     await update_request_status(req_id, "rejected")
     await call.answer("Заявка отклонена", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"❌ Заявка #{req_id}", f"❌ Заявка #{req_id} [ОТКЛОНЕНО]"))
-    
     details = await get_request_details(req_id)
     if details:
         try: await call.bot.send_message(details['user_id'], f"❌ Ваша заявка #{req_id} отклонена администратором.")
         except: pass
 
-# --- 🐕 ЛОГИКА ЗАЯВОК ---
+# --- 🐕 НОВЫЙ ПОТОК ЗАЯВОК (КАЛЕНДАРЬ -> ЧАС -> МИНУТЫ -> ДЛИТЕЛЬНОСТЬ) ---
+@dp.message(F.text == "🐕 Заявка на выгул")
+async def cmd_walk_menu(message: Message, state: FSMContext):
+    await message.answer("📅 Выберите дату выгула (следующие 14 дней):", reply_markup=get_calendar_kb())
+    await state.clear()
 
-@dp.message(WalkState.date)
-async def process_walk_date(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+@dp.callback_query(F.data.startswith("cal_"))
+async def process_date_click(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    date_str = call.data.split("_", 1)[1]
+    await state.update_data(walk_date=date_str)
+    await call.message.answer("🕒 Выберите ЧАС выгула (00-23):", reply_markup=get_hour_kb())
+
+@dp.callback_query(F.data.startswith("hour_"))
+async def process_hour_click(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    hour = call.data.split("_", 1)[1]
+    await state.update_data(walk_hour=hour)
+    await call.message.answer("⏱ Выберите МИНУТЫ (шаг 10 мин):", reply_markup=get_minute_kb())
+
+@dp.callback_query(F.data.startswith("min_"))
+async def process_minute_click(call: CallbackQuery, state: FSMContext):
+    await call.answer()
+    minute = call.data.split("_", 1)[1]
+    data = await state.get_data()
+    
+    date_str = data.get('walk_date')
+    hour = data.get('walk_hour')
+    
+    if not date_str or not hour:
+        await call.message.answer("❌ Ошибка данных. Начните заново: /walk", reply_markup=main_kb)
         await state.clear()
-        await message.answer("Отменено.", reply_markup=main_kb)
         return
-    try:
-        datetime.strptime(message.text, "%d.%m.%Y")
-        await state.update_data(walk_date=message.text)
-        await message.answer("⏰ Время (ЧЧ:ММ):")
-        await state.set_state(WalkState.time)
-    except ValueError:
-        await message.answer("❌ Формат: ДД.ММ.ГГГГ")
 
-@dp.message(WalkState.time)
-async def process_walk_time(message: Message, state: FSMContext):
-    try:
-        datetime.strptime(message.text, "%H:%M")
-        await state.update_data(walk_time=message.text)
-        await message.answer("⏱ Длительность:", reply_markup=get_duration_kb())
-    except ValueError:
-        await message.answer("❌ Формат: ЧЧ:ММ")
+    # Формируем итоговое время для проверки и сохранения
+    time_str = f"{hour}:{minute}"
+    selected_dt = datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
+    min_dt = datetime.now() + timedelta(hours=4)
+
+    # 🔥 ПРОВЕРКА ПРАВИЛА 4 ЧАСОВ
+    if selected_dt <= min_dt:
+        await call.message.answer(
+            f"❌ Невозможно оформить заявку!\n\n"
+            f"📏 Заявку можно сделать минимум за 4 часа до выгула.\n"
+            f"🕒 Вы выбрали: {date_str} в {time_str}\n"
+            f"⏳ Ближайшее доступное время: {min_dt.strftime('%d.%m.%Y %H:%M')}",
+            reply_markup=main_kb
+        )
+        await state.clear()
+        return
+
+    await state.update_data(walk_time=time_str)
+    await call.message.answer("⏱ Выберите длительность выгула:", reply_markup=get_duration_kb())
 
 @dp.callback_query(F.data.startswith("walk_"))
 async def process_duration_click(call: CallbackQuery, state: FSMContext):
     await call.answer()
     try:
         duration = int(call.data.split("_")[1])
-        price = (duration // 10) * 50
+        # 💰 НОВАЯ ФОРМУЛА ЦЕНЫ (10 мин = 200 руб)
+        price = DURATION_PRICES.get(duration, (duration // 10) * 200)
+        
         data = await state.get_data()
         
-        # ✅ ИСПРАВЛЕНИЕ СИНТАКСИСА
-        if 'walk_date' not in data or 'walk_time' not in data:
-            await call.message.answer("❌ Данные потеряны. Попробуйте снова.")
+        # ✅ ИСПРАВЛЕННЫЙ СИНТАКСИС
+        if 'walk_date' not in data or 'walk_time' not in 
+            await call.message.answer("❌ Данные потеряны. Попробуйте снова.", reply_markup=main_kb)
             await state.clear()
             return
 
-        # 🔥 ПРОВЕРКА БАЛАНСА ПЕРЕД СОЗДАНИЕМ
+        # 🔥 ПРОВЕРКА БАЛАНСА
         balance = await get_balance(call.from_user.id)
         if balance < price:
             await call.message.answer(
@@ -252,22 +315,19 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
             await state.clear()
             return
 
-        # Создаем заявку
         await create_walk_request(call.from_user.id, data['walk_date'], data['walk_time'], duration, price)
-        await call.message.edit_text(f"✅ Заявка создана!\n📅 {data['walk_date']} {data['walk_time']}\n💰 Стоимость: {price} ₽ (Будет списано при одобрении)")
+        await call.message.edit_text(f"✅ Заявка создана!\n📅 {data['walk_date']} в {data['walk_time']}\n⏱ {duration} мин\n💰 Стоимость: {price} ₽\n\n💡 Средства спишутся автоматически после одобрения админом.")
         await state.clear()
         await call.message.answer("Главное меню:", reply_markup=main_kb)
     except Exception as e:
-        # 🔥 Выводим полную ошибку в логи Railway, чтобы мы сразу видели причину
-        import traceback
         print(f"❌ ПОЛНАЯ ОШИБКА СОХРАНЕНИЯ:\n{traceback.format_exc()}")
-        await call.message.answer(f"❌ Ошибка при сохранении заявки. Админ уже видит лог.")
+        await call.message.answer("❌ Ошибка при сохранении заявки. Админ уже видит лог.", reply_markup=main_kb)
 
 @dp.callback_query(F.data == "cancel_walk")
 async def cancel_walk_click(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.clear()
-    await call.message.edit_text("❌ Отменено.")
+    await call.message.edit_text("❌ Отменено.", reply_markup=None)
     await call.message.answer("Главное меню:", reply_markup=main_kb)
 
 @dp.message(F.text == "❌ Отмена")
@@ -302,7 +362,7 @@ async def main():
     if not token: return
     await init_db()
     bot = Bot(token=token)
-    print("✅ Бот с автосписанием запущен!")
+    print("✅ Бот 24/7 с тарифом 200₽/10мин запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

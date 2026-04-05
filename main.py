@@ -13,7 +13,8 @@ from database import init_db, add_user, get_balance, update_balance, create_walk
 dp = Dispatcher(storage=MemoryStorage())
 
 # --- 🔢 АДМИН ID (замените на свой Telegram ID) ---
-ADMIN_ID = 123456789  # ← ВПИШИТЕ СЮДА ВАШ ID (узнайте у @userinfobot)
+ADMIN_ID = 400063653  # ← ВПИШИТЕ СЮДА ВАШ ID (узнайте у @userinfobot)
+ADMIN_ID = 1237344396  # ← ВПИШИТЕ СЮДА ВАШ ID (узнайте у @userinfobot)
 
 # --- 🎨 КЛАВИАТУРЫ ---
 main_kb = ReplyKeyboardMarkup(

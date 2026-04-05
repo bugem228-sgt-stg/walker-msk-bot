@@ -1,4 +1,4 @@
-# main.py — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ
+# main.py — ИСПРАВЛЕННАЯ ВЕРСИЯ (aiogram 3.x compatible)
 import asyncio
 import os
 from datetime import datetime
@@ -98,9 +98,9 @@ async def process_topup_amount(message: Message, state: FSMContext):
             await message.answer("❌ Сумма должна быть больше 0")
             return
         
-        # 🔹 Безопасная отправка админу (не сломает ответ пользователю)
+        # 🔹 Безопасная отправка админу (ИСПОЛЬЗУЕМ message.bot)
         try:
-            await dp.bot.send_message(
+            await message.bot.send_message(
                 ADMIN_ID,
                 f"💰 <b>Запрос на пополнение!</b>\n"
                 f"👤 @{message.from_user.username or 'anon'} (ID: <code>{message.from_user.id}</code>)\n"
@@ -111,7 +111,7 @@ async def process_topup_amount(message: Message, state: FSMContext):
             print(f"✅ Уведомление админу отправлено для user {message.from_user.id}")
         except Exception as e:
             print(f"⚠️ Не удалось уведомить админа (проверьте ADMIN_ID): {e}")
-            # Бот всё равно ответит пользователю, даже если админ не получит сообщение
+            # Бот всё равно ответит пользователю
 
         await message.answer(f"✅ Заявка на {amount}₽ отправлена!\n💡 Админ зачислит средства вручную.", reply_markup=main_kb)
         await state.clear()
@@ -156,9 +156,10 @@ async def admin_show_pending(call: CallbackQuery):
         text += f"🆔 #{req['id']} | 📅 {req['walk_date']} {req['walk_time']}\n"
         text += f"   ⏱ {req['duration_min']} мин | 💰 {req['price']} ₽\n"
         text += f"   👤 User ID: <code>{req['user_id']}</code>\n\n"
+        # ✅ Добавляем user_id в callback data, чтобы уведомить правильного юзера
         keyboard.append([
-            InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}"),
-            InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}")
+            InlineKeyboardButton(text=f"✅ Заявка #{req['id']}", callback_data=f"approve_{req['id']}_{req['user_id']}"),
+            InlineKeyboardButton(text=f"❌ Заявка #{req['id']}", callback_data=f"reject_{req['id']}_{req['user_id']}")
         ])
 
     await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
@@ -166,23 +167,35 @@ async def admin_show_pending(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("approve_"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    req_id = int(call.data.split("_")[1])
+    
+    # ✅ Извлекаем ID заявки и ID пользователя из callback data
+    parts = call.data.split("_")
+    req_id = int(parts[1])
+    user_id = int(parts[2])
+    
     await update_request_status(req_id, "approved")
     await call.answer("Заявка одобрена!", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"✅ Заявка #{req_id}", f"✅ Заявка #{req_id} [ОДОБРЕНО]"))
+    
+    # ✅ Уведомляем ПОЛЬЗОВАТЕЛЯ (используем call.bot)
     try:
-        await dp.bot.send_message(call.from_user.id, f"✅ Ваша заявка #{req_id} одобрена! Ждём вас.")
+        await call.bot.send_message(user_id, f"✅ Ваша заявка #{req_id} одобрена! Ждём вас.")
     except: pass
 
 @dp.callback_query(F.data.startswith("reject_"))
 async def admin_reject(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
-    req_id = int(call.data.split("_")[1])
+    
+    parts = call.data.split("_")
+    req_id = int(parts[1])
+    user_id = int(parts[2])
+    
     await update_request_status(req_id, "rejected")
     await call.answer("Заявка отклонена", show_alert=True)
     await call.message.edit_text(call.message.text.replace(f"❌ Заявка #{req_id}", f"❌ Заявка #{req_id} [ОТКЛОНЕНО]"))
+    
     try:
-        await dp.bot.send_message(call.from_user.id, f"❌ Ваша заявка #{req_id} отклонена.")
+        await call.bot.send_message(user_id, f"❌ Ваша заявка #{req_id} отклонена.")
     except: pass
 
 # --- 🐕 ЛОГИКА ЗАЯВОК ---

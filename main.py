@@ -16,7 +16,7 @@ from database import (
 dp = Dispatcher(storage=MemoryStorage())
 
 # ⚠️ ВАЖНО: Впишите сюда свой Telegram ID (число, без кавычек)
-ADMIN_ID = 123456789  # <-- ЗАМЕНИТЕ НА ВАШ ID!
+ADMIN_ID = 400063653  # <-- ЗАМЕНИТЕ НА ВАШ ID!
 
 # --- 🎨 КЛАВИАТУРЫ ---
 main_kb = ReplyKeyboardMarkup(

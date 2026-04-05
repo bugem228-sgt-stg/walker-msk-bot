@@ -1,4 +1,4 @@
-# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (Проверка баланса + Автосписание)
+# main.py — ФИНАЛЬНАЯ ВЕРСИЯ (Исправленный синтаксис + Автосписание)
 import asyncio
 import os
 from datetime import datetime
@@ -15,8 +15,8 @@ from database import (
 
 dp = Dispatcher(storage=MemoryStorage())
 
-# ⚠️ ВАЖНО: Впишите сюда свой Telegram ID
-ADMIN_ID = 400063653  # <-- ЗАМЕНИТЕ НА ВАШ ID!
+# ⚠️ ВАЖНО: Впишите сюда свой Telegram ID (число, без кавычек)
+ADMIN_ID = 123456789  # <-- ЗАМЕНИТЕ НА ВАШ ID!
 
 # --- 🎨 КЛАВИАТУРЫ ---
 main_kb = ReplyKeyboardMarkup(
@@ -109,7 +109,7 @@ async def process_topup_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число больше 0")
 
-# --- 👨‍💼 АДМИН-ПАНЕЛЬ ---
+# --- 👨‍ АДМИН-ПАНЕЛЬ ---
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
@@ -153,7 +153,7 @@ async def admin_show_pending(call: CallbackQuery):
 
     await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
 
-# 🔥 ИСПРАВЛЕННАЯ ЛОГИКА ОДОБРЕНИЯ (со списанием)
+# 🔥 ЛОГИКА ОДОБРЕНИЯ (со списанием баланса)
 @dp.callback_query(F.data.startswith("approve_"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID: return
@@ -235,7 +235,8 @@ async def process_duration_click(call: CallbackQuery, state: FSMContext):
         price = (duration // 10) * 50
         data = await state.get_data()
         
-        if 'walk_date' not in data or 'walk_time' not in 
+        # ✅ ИСПРАВЛЕНИЕ СИНТАКСИСА ЗДЕСЬ
+        if 'walk_date' not in data or 'walk_time' not in data:
             await call.message.answer("❌ Данные потеряны. Попробуйте снова.")
             await state.clear()
             return
